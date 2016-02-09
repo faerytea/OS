@@ -1,13 +1,13 @@
 all : hello
 
-hello.o : hello.c
-	gcc -c hello_world.c -o hello.o
+%.o : %.c
+	gcc -c $* -o $@
 
-hello : hello.o
-	gcc -s hello.o -o hello.o
+hello : hello_world.o
+	gcc -s $* -o $@
 
 clean : clean_obj
 	rm hello
 
 clean_obj :
-	rm hello.o
+	rm *.o
