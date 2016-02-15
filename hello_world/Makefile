@@ -3,7 +3,7 @@ all : hello
 %.o : %.c
 	gcc -c $* -o $@
 
-hello : hello_world.o
+hello_world : hello_world.o
 	gcc -s $* -o $@
 
 clean : clean_obj
