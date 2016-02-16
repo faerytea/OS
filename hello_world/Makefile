@@ -25,6 +25,7 @@ lib%.so : %.o
 	gcc -shared $< -o $@
 
 hello_static : hello_static.o libhello.a
+	gcc $< -o $@ -L. -lhello
 
 hello_shared : hello_shared.o libhello.so
 	gcc $< -o $@ -L. -lhello
