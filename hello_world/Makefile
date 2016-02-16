@@ -24,6 +24,10 @@ lib%.a : %.o
 lib%.so : %.o
 	gcc -shared $< -o $@
 
-hello_static : hello_static.o  libhello.a
+hello_static : hello_static.o libhello.a
 
 hello_shared : hello_shared.o libhello.so
+	gcc $< -o $@ -L. -lhello
+
+run : hello_shared
+	LD_LIBRARY_PATH=. ./hello_shared
