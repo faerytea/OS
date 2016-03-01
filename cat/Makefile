@@ -1,7 +1,10 @@
 all : cat
 
-cat : cat.o libredir.a
+cat_l : cat_l.o libredir.a
 	gcc $< -o $@ -L. -lredir
+
+cat : cat.o
+	gcc $< -o $@
 
 %.o : %.c
 	gcc -c $? -o $@
@@ -13,7 +16,7 @@ lib%.so : %.o
 	gcc -shared $< -o $@
 
 clean : clean_obj clean_lib clean_shared
-	rm -f cat
+	rm -f cat cat_l
 
 clean_obj :
 	rm -f *.o
