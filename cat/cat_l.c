@@ -2,28 +2,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-
-#define BUF_SIZE 1024*4 // 4kb
-
-char buf[BUF_SIZE];
-
-int redirection(int fd) {
-	int received;
-	do {
-		received = read(fd, buf, BUF_SIZE);
-		if (received < 0) {
-			return -1;
-		}
-		else {
-			int written = 0;
-			do {
-				written = write(1, buf + written, received - written);
-				if (written < 0) return -2;
-			} while (received != written);
-		}
-	} while (received != 0);
-	return 0;
-}
+#include <redir.h>
 
 void printerr(const char *prestr) {
 	int err = errno;
@@ -40,7 +19,7 @@ int main(int argc, char **argv) {
 			printerr(argv[a]);
 		}
 		else {
-			switch (redirection(fd)) {
+			switch (redirection(fd, 1)) {
 				case -1:
 					printerr("Read error: ");
 					break;
@@ -57,7 +36,7 @@ int main(int argc, char **argv) {
 			}
 		}
 	}
-	if ((a == 1) && (redirection(0) != 0)) {
+	if ((a == 1) && (redirection(0, 1) != 0)) {
 		printerr("Error in stdin! ");
 	}
 	return 0;
