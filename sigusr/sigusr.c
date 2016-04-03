@@ -1,4 +1,4 @@
-#define ONE_AND_EXIT
+#define STRICT_10_SEC
 
 #include <stdio.h>
 #include <signal.h>
@@ -6,9 +6,9 @@
 
 #ifdef ONE_AND_EXIT
 #include <stdlib.h>
+#endif
 
 int secs = 10;
-#endif
 
 void handler(int signum, siginfo_t * siginfo, void * useless) {
 	char s = 1;
@@ -21,10 +21,10 @@ void handler(int signum, siginfo_t * siginfo, void * useless) {
 	exit(0);
 	#endif
 	#ifdef STRICT_10_SEC
-	const struct sigaction sa;
-	sa.sa_handler = SIGIGN;
-	sigaction(SIGUSR1, sa, NULL);
-	sigaction(SIGUSR2, sa, NULL);
+	struct sigaction sa;
+	sa.sa_handler = SIG_IGN;
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
 	#endif
 }
 
