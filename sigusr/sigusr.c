@@ -1,4 +1,5 @@
 #define STRICT_10_SEC
+//#define ONE_AND_EXIT
 
 #include <stdio.h>
 #include <signal.h>
@@ -9,6 +10,9 @@
 #endif
 
 int secs = 10;
+#ifdef STRICT_10_SEC
+volatile char caught = 0;
+#endif
 
 void handler(int signum, siginfo_t * siginfo, void * useless) {
 	char s = 1;
@@ -25,6 +29,7 @@ void handler(int signum, siginfo_t * siginfo, void * useless) {
 	sa.sa_handler = SIG_IGN;
 	sigaction(SIGUSR1, &sa, NULL);
 	sigaction(SIGUSR2, &sa, NULL);
+	caught = 1;
 	#endif
 }
 
@@ -38,8 +43,11 @@ int main() {
 	sigaction(SIGUSR2, &sa, NULL);
 	secs = sleep(10);
 	#ifdef STRICT_10_SEC
-	sleep(secs);
+	while ((secs = sleep(secs)) != 0);
+	if (caught == 0) printf("No signals were caught\n");
 	#endif
+	#ifdef ONE_AND_EXIT
 	if (secs == 0) printf("No signals were caught\n");
+	#endif
 	return 0;
 }
