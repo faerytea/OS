@@ -1,11 +1,14 @@
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <stdio.h>
+/*#include <errno.h>
+//#include <stdio.h> */
 
 const int INIT_BUF_SIZE = 1024;
+const int INIT_PID_SIZE = 16;
 
 int is_whitespace(char c) {
 	return ((c == '\t') || (c <= ' ')) && (c != '\n');
@@ -22,8 +25,8 @@ void expand(void **target, unsigned size) {
 	resize(target, size, size*2);
 }
 
-// scans command (and maybe begin of stdin) and returns array of commands
-// where each command represent as array of args (and last one - stdin)
+/* scans command (and maybe begin of stdin) and returns array of commands
+ * where each command represent as array of args (and last one - stdin) */
 char ***scan(unsigned *result_size) {
 	int commands = 0;
 	int cnt;
@@ -99,28 +102,120 @@ char ***scan(unsigned *result_size) {
 				}
 			}
 		}
-		result[commands] = (char **) malloc(sizeof(char *));
-		result[commands][0] = (char *) malloc((bufp - cnt) * sizeof(char));
-		memcpy(result[commands][0], buffer + cnt + 1, bufp - cnt - 1);
-		result[commands][0][bufp - cnt - 1] = '\0';
+		//result[commands] = (char **) malloc(sizeof(char *) * 10);
+		//result[commands][0] = (char *) malloc((bufp - cnt) * sizeof(char));
+		//memcpy(result[commands][0], buffer + cnt + 1, bufp - cnt - 1);
+		//result[commands][0][bufp - cnt - 1] = '\0';
 	}
 	*result_size = commands;
 	return result;
 } // so, it works
 
 void free_tree(char ***tree, unsigned size) {
-	unsigned it = -1;
-	while (++it < size) {
+	unsigned it = size;
+	while (--it > -1) {
 		int it2 = -1;
 		while (tree[it][++it2] != NULL) {
 			free(tree[it][it2]);
+			write(0, "free?\n", 6);
 		}
 		free(tree[it]);
+		write(0, "free\n", 5);
 	}
 	free(tree);
+	write(0, "free!\n", 6);
+}
+
+volatile pid_t *pid_array;
+volatile unsigned pid_array_size;
+volatile unsigned pid_array_iter;
+
+void run(char **cmd, int from[2], int to[2]) {
+	write(0, cmd[0], strlen(cmd[0]));
+	write(0, "!\n", 2);
+	pid_t pid = fork();
+	if (pid == 0) {
+		if (from != NULL) {
+			dup2(from[0], STDIN_FILENO);
+			close(from[0]);
+			close(from[1]);
+		}
+		if (to != NULL) {
+			dup2(to[1], STDOUT_FILENO);
+			close(to[0]);
+			close(to[1]);
+		}
+		write(0, "Im'a ", 5);
+		write(0, cmd[0], strlen(cmd[0]));
+		write(0, "!\n", 2);
+		execvp(cmd[0], cmd);
+	}
+	else {
+		if (pid_array_iter == pid_array_size) {
+			expand((void **) &pid_array, pid_array_size);
+			pid_array_size *=2;
+		}
+		if (from != NULL) {
+			dup2(from[0], STDIN_FILENO);
+			close(from[0]);
+			close(from[1]);
+		}
+		if (to != NULL) {
+			dup2(to[1], STDOUT_FILENO);
+			close(to[0]);
+			close(to[1]);
+		}
+		pid_array[pid_array_iter++] = pid;
+	}
+}
+
+void run_chain(char ***tree, int size) {
+	unsigned it = 0;
+	write(0, "s1\n", 3);
+	int **pipes = (int **) malloc((size - 2) * sizeof(int[2]));
+	write(0, "s2\n", 3);
+	if (size < 2) {
+		write(0, "s3a\n", 4);
+		run(tree[0], NULL, NULL);
+	}
+	else {
+		write(0, "s3b\n", 4);
+		pipe(pipes[0]);
+		run(tree[0], NULL, pipes[0]);
+	}
+	while (++it < size-1) {
+		write(0, "yet another pipe\n", 17);
+		pipe(pipes[it]);
+		run(tree[it], pipes[it-1], pipes[it]);
+	}
+	if (size > 1) {
+		write(0, "last one\n", 9);
+		run(tree[size-1], pipes[it-1], NULL);
+	}
+	while (pid_array_iter > 0) {
+		int status;
+		waitpid(pid_array[pid_array_iter], &status, 0);
+		if (WIFEXITED(status) || WIFSIGNALED(status)) pid_array_iter--;
+	}
+	free(pipes);
+}
+
+void handler(int signum, siginfo_t * siginfo, void * useless) {
+	int i;
+	for (i = 0; i < pid_array_iter; ++i) kill(pid_array[i], SIGINT);
 }
 
 int main() {
+
+	struct sigaction sa;
+	sa.sa_sigaction = &handler;
+	sa.sa_flags = SA_SIGINFO;
+	sigaddset(&sa.sa_mask, SIGINT);
+	sigaction(SIGINT, &sa, NULL);
+
+	pid_array_size = INIT_PID_SIZE;
+	pid_array_iter = 0;
+	pid_array = (pid_t *) malloc(pid_array_size * sizeof(pid_t));
 	char ***line;
 	unsigned size;
 	goto LGO;
@@ -134,6 +229,7 @@ int main() {
 			}
 			write(0, "|\n", 2);
 		}
+		run_chain(line, size);
 		free_tree(line, size);
 		LGO:
 		write(0, "\nftsh\\ ", 7);
