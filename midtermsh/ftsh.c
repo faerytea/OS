@@ -108,6 +108,18 @@ char ***scan(unsigned *result_size) {
 	return result;
 } // so, it works
 
+void free_tree(char ***tree, unsigned size) {
+	unsigned it = -1;
+	while (++it < size) {
+		int it2 = -1;
+		while (tree[it][++it2] != NULL) {
+			free(tree[it][it2]);
+		}
+		free(tree[it]);
+	}
+	free(tree);
+}
+
 int main() {
 	char ***line;
 	unsigned size;
@@ -122,6 +134,7 @@ int main() {
 			}
 			write(0, "|\n", 2);
 		}
+		free_tree(line, size);
 		LGO:
 		write(0, "\nftsh\\ ", 7);
 	} while ((line = scan(&size)) != NULL);
