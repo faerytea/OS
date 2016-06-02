@@ -17,7 +17,7 @@
 #include <stdlib.h>
 
 #define MAXEVENTS 7
-#define TIMEOUT 1000
+#define TIMEOUT -1
 #define BUF_SIZE 1024
 #define MAX_FD 20000
 #define ADDITIONAL_QUEUE_BUF_CAP 10
@@ -72,26 +72,50 @@ void init_network(int port) {
 void delete_node(int fdpty) {
 	struct node *i = root;
 	struct node *j = NULL;
+	//if (root == NULL) printf("List died!\n");
+	//printf("finding node for %d\n", fdpty);
 	if (root->ptyfd == fdpty) {
+		//printf("found in root\n");
 		root = root->next;
-		if (root == NULL) last = NULL;
-		else last = i->next;
+		if (root == NULL) {
+			last = NULL;
+			//printf("list dropped!\n");
+		}
 	}
 	else {
 		for (j = root; (j->next != NULL) && (j->next->ptyfd != fdpty); j = j->next);
 		if (j->next == NULL) {
-			perror("Zombie ran away! Hide, if you can!\n");
+			printf("Zombie ran away! Hide while you still can!\n");
 			return;
 		}
+		//printf("found!\n");
 		i = j->next;
+		j->next = i->next;
+		if (j->next == NULL) last = j;
 	}
-	kill(i->ptypid, SIGTERM);
+	//printf("send kill from %d to %d\n", getpid(), i->ptypid);
+	//printf("%p\n", i);
+	while (kill(i->ptypid, SIGTERM) < 0) {
+		perror("term");
+	}
 	int status;
+	//printf("deleting\n");
+	char wtd = 0;
+	char hang = 0;
 	do {
-		waitpid(i->ptyfd, &status, 0);
-	} while (WIFSIGNALED(status));
-	if (j != NULL) j->next = i->next;
+		if (wtd > 0) sleep(1);
+		if (wtd == 2) {
+			if (kill(i->ptypid, SIGKILL) < 0) perror("kill");
+			//printf("kill\n");
+		}
+		//printf("wait on %d\n", i->ptypid);
+		if ((hang = waitpid(i->ptypid, &status, WNOHANG)) < 0) {
+			perror("wait");
+		}
+		++wtd;
+	} while ((hang == 0) || (!(WIFSIGNALED(status) || WIFEXITED(status))));
 	free(i);
+	//printf("deleted\n");
 }
 
 void close_evrything() {
@@ -99,7 +123,7 @@ void close_evrything() {
 	if (pollfd != -1) close(pollfd);
 	if (root != NULL)
 		for (struct node *i = root; i->next; i = i->next)
-			close(i->ptyfd); // add killing children
+			close(i->ptyfd);
 }
 
 int term() {
@@ -117,6 +141,7 @@ int term() {
 }
 
 struct node *shell() {
+	//printf("mypid %d\n", getpid());
 	int fdpty = term();
 
 	pid_t f = fork();
@@ -137,6 +162,7 @@ struct node *shell() {
 		close(fslave);
 		close(fdpty);
 		close_evrything();
+		//printf("ppid - %d, me - %d\n", getppid(), getpid());
 		execl("/bin/sh", "/bin/sh", NULL);
 	}
 	struct node *n = (struct node *)malloc(sizeof(struct node));
@@ -151,6 +177,7 @@ struct node *shell() {
 		root = n;
 	}
 	last = n;
+	//printf("new %p, root %p, last %p\n", n, root, last);
 	return n;
 }
 
@@ -192,11 +219,11 @@ struct epoll_event *make_events(uint32_t what, int from, int to) {
 void delete_event(struct epoll_event *event) {
 	struct desc_pair *p = (struct desc_pair *)event->data.ptr;
 	if ((close(p->from) == -1) && (errno != EBADF)) {
-		// bad
+		perror("cannot close");
 	}
-	if ((close(p->to) == -1) && (errno != EBADF)) {
-		// bad
-	}
+	//if ((close(p->to) == -1) && (errno != EBADF)) {
+		//perror("cannot close");
+	//}
 	//if ((close(p->another->from) == -1) && (errno != EBADF)) {
 		//// bad
 	//}
@@ -262,8 +289,15 @@ void delete_queue_by_fd(int fd) {
 		fdtable[fd % MAX_FD] = delete_queue(i);
 		return;
 	}
+	if (i == NULL) {
+		printf("Queue ran away!\n");
+		return;
+	}
 	while ((i->next != NULL) && (i->next->fd != fd)) i = i->next;
-	if (i->next == NULL) return;
+	if (i->next == NULL) {
+		printf("One of queues leaked\n");
+		return;
+	}
 	i->next = delete_queue(i->next);
 }
 
@@ -276,23 +310,23 @@ void demonize() {
 	if (file > 0) {
 		unsigned short w = 0, dw = 0;
 		do {
-			dw = read(file, buffer + w, BUF_SIZE);
+			dw = read(file, buffer + w, BUF_SIZE - w);
 			w += dw;
 		} while (dw > 0);
 		buffer[w] = 0;
 		if (!kill(atoi(buffer), 0)) {
-			perror("Already running: ");
-			perror(buffer);
-			perror("\n");
+			printf("Already running: ");
+			printf(buffer);
+			printf("\n");
 			close_evrything();
 			close(file);
 			exit(0);
 		}
 	}
-	close(file);
+	if (file >= 0) close(file);
 	int f1 = fork();
 	if (f1 < 0) {
-		perror("cannot fork =( \n");
+		perror("cannot fork ");
 		exit(-23);
 	}
 	if (f1 != 0) {
@@ -301,13 +335,13 @@ void demonize() {
 	setsid();
 	int f2 = fork();
 	if (f2 < 0) {
-		perror("cannot fork =( \n");
+		perror("cannot fork ");
 		exit(-23);
 	}
 	if (f2 != 0) {
-		file = open("/tmp/rshd.pid", O_WRONLY | O_CREAT | O_TRUNC, 01664);
+		file = open("/tmp/rshd.pid", O_WRONLY | O_CREAT | O_TRUNC, 00664);
 		if (file < 0) {
-			perror("cannot create a file\n");
+			perror("cannot create a file ");
 			exit(-17);
 		}
 		char *tbuff = (char *) malloc(15 * sizeof(char));
@@ -317,7 +351,6 @@ void demonize() {
 		close(file);
 		exit(0);
 	}
-	// !!
 }
 
 int main(int argc, char ** argv) {
@@ -364,45 +397,68 @@ int main(int argc, char ** argv) {
 			if (events[i].data.ptr == NULL) {
 				// new connection
 				int sd = accept(sockfd, NULL, NULL); //, O_NONBLOCK | O_CLOEXEC); // errors // accept4
-				printf("Accepted socket: %d\n", sd);
+				//printf("Accepted socket: %d\n", sd);
 				struct node *sh = shell();
-				struct epoll_event *es = make_events(EPOLLIN, sd, sh->ptyfd);
-				epoll_ctl(pollfd, EPOLL_CTL_ADD, sd, &es[0]);//make_event(EPOLLIN, sd, sh->ptyfd));
-				epoll_ctl(pollfd, EPOLL_CTL_ADD, sh->ptyfd, &es[1]);//make_event(EPOLLIN, sh->ptyfd, sd));
+				struct epoll_event *es = make_events(EPOLLIN | EPOLLHUP, sd, sh->ptyfd);
+				epoll_ctl(pollfd, EPOLL_CTL_ADD, sd, &es[0]);
+				epoll_ctl(pollfd, EPOLL_CTL_ADD, sh->ptyfd, &es[1]);
 				free(es);
 				fcntl(sd, F_SETFL, fcntl(sd, F_GETFL) | O_NONBLOCK | O_CLOEXEC); // accept4 is same
-				fcntl(sh->ptyfd, F_SETFL, fcntl(sh->ptyfd, F_GETFL) | O_NONBLOCK); // accept4 is same
-				// add hup
+				fcntl(sh->ptyfd, F_SETFL, fcntl(sh->ptyfd, F_GETFL) | O_NONBLOCK | O_CLOEXEC); // accept4 is same
 			}
 			else {
 				uint32_t ev = events[i].events;
+				if (ev & EPOLLRDHUP) printf("RDHUP~\n");
 				// transmit or disconnect
+				if (ev & EPOLLHUP) {
+					ev = 0; //CRUTCH
+					goto ptd_exit; // HOTFIX
+				}
 				if (ev & EPOLLIN) {
 					struct desc_pair * pair = ((struct desc_pair *)events[i].data.ptr);
-					int r = read(pair->from, buffer, BUF_SIZE); // !!! BLOCKS !!! why?
-					printf("read()-> %d\n", r);
+					int r = read(pair->from, buffer, BUF_SIZE);
 					if (r < 0) {
-						perror(errno == EAGAIN ? "again" : "else");
-						perror(strerror(errno));
-						//exit(-1);
+						perror("reading error ");
 						continue;
 					}
 					struct queue_entry *que = find_queue(pair->to);
 					if (r == 0) {
+						ptd_exit:
+						if (ev == 0) {
+							pair = ((struct desc_pair *)events[i].data.ptr)->another;
+							que = find_queue(pair->from);
+							r = 0;
+						}
 						epoll_ctl(pollfd, EPOLL_CTL_DEL, pair->from, NULL);
 						if (que == NULL) {
-							printf("empty shell killed\n");
+							epoll_ctl(pollfd, EPOLL_CTL_DEL, pair->to, NULL);
+							//printf("empty shell killed\n");
 							delete_node(pair->to);
+							close(pair->to);
+							free((struct desc_pair *)pair->another);
 						}
 						if ((que != NULL) && (que->length == que->offset)) {
 							epoll_ctl(pollfd, EPOLL_CTL_DEL, pair->to, NULL);
-							printf("%p %d %d\n", pair->another, pair->another->from, pair->another->to);
-							printf("%p %d %d\n", pair, pair->from, pair->to);
+							//printf("%p %d %d\n", pair->another, pair->another->from, pair->another->to);
+							//printf("%p %d %d\n", pair, pair->from, pair->to);
 							delete_node(pair->to);
+							close(pair->to);
 							free((struct desc_pair *)pair->another);
 							delete_queue_by_fd(que->fd);
+							que = NULL;
 						}
-						delete_event(&events[i]);
+						if (que != NULL) {
+							pair->another->to = -1;
+						}
+						if (ev != 0) {
+							delete_queue_by_fd(pair->from);
+							delete_event(&events[i]);
+						}
+						else {
+							delete_queue_by_fd(pair->to);
+							close(pair->from);
+							free(pair);
+						}
 					}
 					else {
 						if (que == NULL) {
@@ -411,7 +467,7 @@ int main(int argc, char ** argv) {
 						else {
 							enqueue(que, buffer, r);
 						}
-						struct epoll_event *tmpe = make_out_event(EPOLLOUT | EPOLLIN, pair->another);
+						struct epoll_event *tmpe = make_out_event(EPOLLOUT | EPOLLIN | EPOLLHUP, pair->another);
 						epoll_ctl(pollfd, EPOLL_CTL_MOD, pair->to, tmpe);//make_event(EPOLLOUT | EPOLLIN, pair->to, pair->from));//mod_event(EPOLLOUT | EPOLLIN, &events[i]));
 						free(tmpe);
 					}
@@ -421,7 +477,6 @@ int main(int argc, char ** argv) {
 					struct queue_entry *que = find_queue(tfd);
 					if (que == NULL) {
 						// unregister, delete
-						printf("WTF %d \n", tfd);
 						epoll_ctl(pollfd, EPOLL_CTL_DEL, tfd, NULL);
 						delete_event(&events[i]);
 						delete_queue_by_fd(tfd);
@@ -430,15 +485,21 @@ int main(int argc, char ** argv) {
 					else {
 						int w = write(tfd, (que->buffer + que->offset), que->length - que->offset);
 						if (w < 0) {
-							perror(strerror(errno));
+							perror("cannot write ");
 							continue;
 						}
 						que->offset += w;
 						if (que->offset == que->length) {
 							clear_queue(que);
-							struct epoll_event *tmpe = make_out_event(EPOLLIN, events[i].data.ptr);
+							struct epoll_event *tmpe = make_out_event(EPOLLIN | EPOLLHUP, events[i].data.ptr);
 							epoll_ctl(pollfd, EPOLL_CTL_MOD, tfd, tmpe);//make_event(EPOLLOUT | EPOLLIN, tfd, ((struct desc_pair *)(events[i].data.ptr))->from));//mod_event(EPOLLIN, &events[i]));
 							free(tmpe);
+							int afd = ((struct desc_pair *)(events[i].data.ptr))->to;
+							if (afd == -1) {
+								delete_queue_by_fd(que->fd);
+								delete_node(tfd);
+								delete_event(&events[i]);
+							}
 						}
 					}
 				}
@@ -453,21 +514,6 @@ int main(int argc, char ** argv) {
 	}
 
 	printf(" exit\n");
-
-	//int clientfd;
-	//if ((clientfd = accept(sockfd, NULL, NULL)) == -1) {
-		//printf("accepting problems");
-		//close(sockfd);
-		//return -5;
-	//}
-
-	//char c;
-	//for (int t = 1;
-		//(t > 0) &&
-		//((t = read(ptyfd, &c, 1)) > 0);
-		//t = write(ptyfd, &c, 1)) {
-		////
-	//}
 
 	return 0;
 }
